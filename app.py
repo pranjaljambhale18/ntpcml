@@ -1,119 +1,86 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import joblib
-import datetime
-import os
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
-st.set_page_config(page_title="NTPC Output Prediction App", layout="wide")
-st.title("NTPC Plant Output Predictor")
-st.write("This app predicts Power, CO2 emissions, Efficiency, and Estimated Profit based on input parameters.")
+# Load the model and expected features
+model = joblib.load("ntpc_model.pkl")
+feature_columns = joblib.load("model_features.pkl")  # list of training feature names
 
-# Load the trained model
-model_path = "ntpc_model.pkl"
-if not os.path.exists(model_path):
-    st.error(f"Model file '{model_path}' not found. Please upload or place the file correctly.")
-    st.stop()
+st.set_page_config(page_title="NTPC Multi-Output Predictor", layout="centered")
 
-model = joblib.load(model_path)
+st.title("⚙️ NTPC Multi-Output Predictor")
+st.markdown("Enter the input values below to get predictions and suggestions.")
 
-# Initialize prediction history
-if "history" not in st.session_state:
-    st.session_state.history = []
-
-with st.form("input_form"):
-    st.subheader("Enter Input Parameters")
-    col1, col2 = st.columns(2)
-
-    with col1:
-        plf = st.slider("PLF (Plant Load Factor) %", min_value=0, max_value=100, value=75)
-        fuel_cost = st.number_input("Fuel Cost (INR/ton)", min_value=1000, value=2500)
-        fuel_availability = st.slider("Fuel Availability (%)", min_value=0, max_value=100, value=80)
-        load = st.number_input("Load (MW)", min_value=100, value=500)
-
-    with col2:
-        heat_rate = st.number_input("Heat Rate (kCal/kWh)", min_value=1000, value=2400)
-        ambient_temp = st.slider("Ambient Temperature (°C)", min_value=10, max_value=50, value=30)
-        o_m_cost = st.number_input("O&M Cost (INR/unit)", min_value=1, value=3)
-        tariff = st.number_input("Tariff (INR/unit)", min_value=1, value=5)
-
+# Dynamic input form based on expected features
+input_data = {}
+with st.form("prediction_form"):
+    for feature in feature_columns:
+        input_data[feature] = st.number_input(f"{feature}", value=0.0, format="%.4f")
+    email = st.text_input("📧 Enter your email to receive predictions (optional)", "")
     submitted = st.form_submit_button("Predict")
 
 if submitted:
-    input_data = np.array([[plf, fuel_cost, fuel_availability, load, heat_rate, ambient_temp, o_m_cost, tariff]])
-    prediction = model.predict(input_data)[0]
-    predicted_power, predicted_co2, predicted_efficiency, estimated_profit = prediction
+    try:
+        input_df = pd.DataFrame([input_data])[feature_columns]  # correct order
+        prediction = model.predict(input_df)[0]
 
-    record = {
-        "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "PLF": plf,
-        "Fuel Cost": fuel_cost,
-        "Fuel Availability": fuel_availability,
-        "Load": load,
-        "Heat Rate": heat_rate,
-        "Ambient Temp": ambient_temp,
-        "O&M Cost": o_m_cost,
-        "Tariff": tariff,
-        "Predicted Power": round(predicted_power, 2),
-        "Predicted CO2": round(predicted_co2, 2),
-        "Efficiency": round(predicted_efficiency, 2),
-        "Estimated Profit": round(estimated_profit, 2)
-    }
-    st.session_state.history.append(record)
+        st.success("✅ Prediction successful!")
+        st.subheader("🔢 Predicted Outputs:")
+        prediction_df = pd.DataFrame(prediction.reshape(1, -1), columns=[f"Output {i+1}" for i in range(len(prediction))])
+        st.dataframe(prediction_df)
 
-    st.subheader("Prediction Results")
-    st.write(f"**Predicted Power (MW):** {round(predicted_power, 2)}")
-    st.write(f"**Predicted CO2 Emissions (tons):** {round(predicted_co2, 2)}")
-    st.write(f"**Efficiency (%):** {round(predicted_efficiency, 2)}")
-    st.write(f"**Estimated Profit (INR):** {round(estimated_profit, 2)}")
+        # Suggestion logic (basic — adjust per your use case)
+        st.subheader("📌 Suggestions:")
+        suggestions = []
+        if input_data["PLF"] < 60:
+            suggestions.append("Increase PLF above 60% for better performance.")
+        if input_data.get("Coal_Consumption", 0) > 5000:
+            suggestions.append("Try to reduce Coal Consumption below 5000 units.")
+        if input_data.get("Aux_Consumption", 0) > 25:
+            suggestions.append("Optimize auxiliary consumption to be below 25 units.")
+        if not suggestions:
+            suggestions.append("All inputs are within optimal range.")
 
-    # Suggestions based on thresholds
-    st.subheader("Suggestions")
-    suggestions = []
+        for suggestion in suggestions:
+            st.write(f"✅ {suggestion}")
 
-    if plf < 50:
-        suggestions.append("PLF is very low. Increase utilization to boost power output and reduce per-unit cost.")
-    elif 50 <= plf < 70:
-        suggestions.append("PLF is below optimal range. Aim for above 70% to increase efficiency and revenue.")
-    elif plf > 90:
-        suggestions.append("Excellent PLF. Ensure maintenance practices continue supporting high utilization.")
+        # Email integration
+        if email:
+            try:
+                sender_email = "your_email@example.com"  # replace with sender
+                sender_password = "your_password"         # replace with password/app password
+                receiver_email = email
 
-    if fuel_cost > 3500:
-        suggestions.append("Fuel cost is high. Explore cheaper alternatives or improve fuel efficiency.")
-    elif fuel_cost < 2000:
-        suggestions.append("Low fuel costs. Consider long-term contracts to sustain this benefit.")
+                message = MIMEMultipart("alternative")
+                message["Subject"] = "NTPC Prediction Results"
+                message["From"] = sender_email
+                message["To"] = receiver_email
 
-    if predicted_power < 200:
-        suggestions.append("Predicted power is quite low. Consider increasing PLF or fuel availability.")
+                html = f"""
+                <html>
+                <body>
+                    <h2>NTPC Prediction Results</h2>
+                    <p><b>Predictions:</b> {prediction.tolist()}</p>
+                    <p><b>Suggestions:</b><ul>{"".join(f"<li>{s}</li>" for s in suggestions)}</ul></p>
+                </body>
+                </html>
+                """
+                message.attach(MIMEText(html, "html"))
 
-    if predicted_co2 > 1000000:
-        suggestions.append("CO2 emissions are high. Consider switching to cleaner fuel or improving combustion efficiency.")
+                with smtplib.SMTP("smtp.gmail.com", 587) as server:
+                    server.starttls()
+                    server.login(sender_email, sender_password)
+                    server.sendmail(sender_email, receiver_email, message.as_string())
 
-    if estimated_profit < 1000:
-        suggestions.append("Profit is very low. Review O&M costs, fuel costs and tariff strategy.")
+                st.success("📧 Email sent successfully!")
 
-    if heat_rate > 2600:
-        suggestions.append("High heat rate detected. Improve boiler and turbine performance.")
+            except Exception as e:
+                st.error(f"Failed to send email: {e}")
 
-    if o_m_cost > 5:
-        suggestions.append("High O&M cost. Audit maintenance processes to reduce cost.")
-
-    if ambient_temp > 40:
-        suggestions.append("High ambient temperature. May affect turbine performance. Consider cooling strategies.")
-
-    if predicted_efficiency < 25:
-        suggestions.append("Efficiency is below average. Consider tuning operations and reducing heat losses.")
-
-    if not suggestions:
-        suggestions.append("All parameters are within optimal range. Keep monitoring and maintaining the performance.")
-
-    for suggestion in suggestions:
-        st.markdown(f"- {suggestion}")
-
-    # Show and export predictions
-    df = pd.DataFrame(st.session_state.history)
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button("Download All Predictions as CSV", data=csv, file_name="ntpc_predictions.csv", mime="text/csv")
-
-    st.subheader("All Predictions Made in This Session")
-    st.dataframe(df, use_container_width=True)
+    except ValueError as e:
+        st.error(f"Input error: {e}")
+    except Exception as ex:
+        st.error(f"❌ Prediction failed: {ex}")
