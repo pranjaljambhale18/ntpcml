@@ -5,26 +5,43 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# Load the model and expected features
+# Load the model and feature list
 model = joblib.load("ntpc_model.pkl")
-feature_columns = joblib.load("model_features.pkl")  # list of training feature names
+feature_columns = joblib.load("model_features.pkl")  # List of training features
 
-st.set_page_config(page_title="NTPC Multi-Output Predictor", layout="centered")
+# Define default values and ranges for sliders (customize as per your dataset)
+default_ranges = {
+    "PLF": (30, 100, 75),
+    "Coal_Consumption": (2000, 7000, 4500),
+    "Aux_Consumption": (10, 40, 22),
+    "Gross_Generation": (0, 10000, 5000),
+    "Net_Generation": (0, 9500, 4500),
+    "Steam_Pressure": (30, 200, 120),
+    "Steam_Temperature": (300, 600, 500),
+    # Add more features with suitable ranges
+}
 
+st.set_page_config(page_title="NTPC Predictor", layout="centered")
 st.title("⚙️ NTPC Multi-Output Predictor")
-st.markdown("Enter the input values below to get predictions and suggestions.")
+st.markdown("Adjust the input values below to get predictions and suggestions.")
 
-# Dynamic input form based on expected features
+# User input form
 input_data = {}
 with st.form("prediction_form"):
     for feature in feature_columns:
-        input_data[feature] = st.number_input(f"{feature}", value=0.0, format="%.4f")
-    email = st.text_input("📧 Enter your email to receive predictions (optional)", "")
-    submitted = st.form_submit_button("Predict")
+        if feature in default_ranges:
+            min_val, max_val, default = default_ranges[feature]
+            input_data[feature] = st.slider(f"{feature}", min_value=min_val, max_value=max_val, value=default)
+        else:
+            input_data[feature] = st.number_input(f"{feature}", value=0.0, format="%.2f")
 
+    email = st.text_input("📧 Enter your email to receive predictions (optional)", "")
+    submitted = st.form_submit_button("🔍 Predict")
+
+# Handle prediction
 if submitted:
     try:
-        input_df = pd.DataFrame([input_data])[feature_columns]  # correct order
+        input_df = pd.DataFrame([input_data])[feature_columns]
         prediction = model.predict(input_df)[0]
 
         st.success("✅ Prediction successful!")
@@ -32,26 +49,26 @@ if submitted:
         prediction_df = pd.DataFrame(prediction.reshape(1, -1), columns=[f"Output {i+1}" for i in range(len(prediction))])
         st.dataframe(prediction_df)
 
-        # Suggestion logic (basic — adjust per your use case)
+        # Generate suggestions
         st.subheader("📌 Suggestions:")
         suggestions = []
         if input_data["PLF"] < 60:
-            suggestions.append("Increase PLF above 60% for better performance.")
+            suggestions.append("⚠️ Increase PLF above 60% for better performance.")
         if input_data.get("Coal_Consumption", 0) > 5000:
-            suggestions.append("Try to reduce Coal Consumption below 5000 units.")
+            suggestions.append("⚠️ Try to reduce Coal Consumption below 5000 units.")
         if input_data.get("Aux_Consumption", 0) > 25:
-            suggestions.append("Optimize auxiliary consumption to be below 25 units.")
+            suggestions.append("⚠️ Optimize auxiliary consumption to be below 25 units.")
         if not suggestions:
-            suggestions.append("All inputs are within optimal range.")
+            suggestions.append("✅ All inputs are within optimal range.")
 
         for suggestion in suggestions:
-            st.write(f"✅ {suggestion}")
+            st.write(suggestion)
 
-        # Email integration
+        # Email prediction
         if email:
             try:
-                sender_email = "your_email@example.com"  # replace with sender
-                sender_password = "your_password"         # replace with password/app password
+                sender_email = "your_email@example.com"
+                sender_password = "your_password"
                 receiver_email = email
 
                 message = MIMEMultipart("alternative")
@@ -75,12 +92,10 @@ if submitted:
                     server.login(sender_email, sender_password)
                     server.sendmail(sender_email, receiver_email, message.as_string())
 
-                st.success("📧 Email sent successfully!")
+                st.success("📩 Email sent successfully!")
 
             except Exception as e:
-                st.error(f"Failed to send email: {e}")
+                st.error(f"Email failed: {e}")
 
-    except ValueError as e:
-        st.error(f"Input error: {e}")
-    except Exception as ex:
-        st.error(f"❌ Prediction failed: {ex}")
+    except Exception as e:
+        st.error(f"❌ Prediction failed: {e}")
