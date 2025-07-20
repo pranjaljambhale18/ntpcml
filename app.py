@@ -1,55 +1,119 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import joblib
+import datetime
+import os
 
-# Load model
-model = joblib.load("ntpc_model.pkl")
+st.set_page_config(page_title="NTPC Output Prediction App", layout="wide")
+st.title("NTPC Plant Output Predictor")
+st.write("This app predicts Power, CO2 emissions, Efficiency, and Estimated Profit based on input parameters.")
 
-st.set_page_config(page_title="NTPC Predictor", layout="centered")
-st.title("🔮 NTPC Power & CO₂ Predictor")
-st.markdown("This app predicts power generation, CO₂ emissions, revenue, fuel cost, and profit based on your inputs.")
+# Load the trained model
+model_path = "ntpc_model.pkl"
+if not os.path.exists(model_path):
+    st.error(f"Model file '{model_path}' not found. Please upload or place the file correctly.")
+    st.stop()
 
-with st.form("prediction_form"):
+model = joblib.load(model_path)
+
+# Initialize prediction history
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+with st.form("input_form"):
+    st.subheader("Enter Input Parameters")
     col1, col2 = st.columns(2)
 
     with col1:
-        installed_capacity = st.number_input("Installed Capacity (MW)", value=60000)
-        coal_received = st.number_input("Coal Received (MTPA)", value=18500000)
-        gas_received = st.number_input("Gas Received (MMSCM)", value=3000)
-        plf = st.slider("PLF (%)", 0, 100, 72)
+        plf = st.slider("PLF (Plant Load Factor) %", min_value=0, max_value=100, value=75)
+        fuel_cost = st.number_input("Fuel Cost (INR/ton)", min_value=1000, value=2500)
+        fuel_availability = st.slider("Fuel Availability (%)", min_value=0, max_value=100, value=80)
+        load = st.number_input("Load (MW)", min_value=100, value=500)
 
     with col2:
-        fuel_cost = st.number_input("Fuel Cost per Unit (₹/kWh)", value=3.2)
-        avg_tariff = st.number_input("Average Tariff (₹/kWh)", value=4.0)
-        re_share = st.slider("RE Share (%)", 0, 100, 28)
+        heat_rate = st.number_input("Heat Rate (kCal/kWh)", min_value=1000, value=2400)
+        ambient_temp = st.slider("Ambient Temperature (°C)", min_value=10, max_value=50, value=30)
+        o_m_cost = st.number_input("O&M Cost (INR/unit)", min_value=1, value=3)
+        tariff = st.number_input("Tariff (INR/unit)", min_value=1, value=5)
 
-    submit = st.form_submit_button("Predict")
+    submitted = st.form_submit_button("Predict")
 
-if submit:
-    input_df = pd.DataFrame([[
-        installed_capacity, coal_received, gas_received,
-        plf, fuel_cost, avg_tariff, re_share
-    ]], columns=[
-        'Installed_Capacity_MW',
-        'Coal_Received_MTPA',
-        'Gas_Received_MMSCM',
-        'PLF_Percentage',
-        'Fuel_Cost_per_Unit',
-        'Avg_Tariff (ECR)',
-        'RE_Share_Percentage'
-    ])
+if submitted:
+    input_data = np.array([[plf, fuel_cost, fuel_availability, load, heat_rate, ambient_temp, o_m_cost, tariff]])
+    prediction = model.predict(input_data)[0]
+    predicted_power, predicted_co2, predicted_efficiency, estimated_profit = prediction
 
-    prediction = model.predict(input_df)
-    predicted_power, predicted_co2 = prediction[0]
+    record = {
+        "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "PLF": plf,
+        "Fuel Cost": fuel_cost,
+        "Fuel Availability": fuel_availability,
+        "Load": load,
+        "Heat Rate": heat_rate,
+        "Ambient Temp": ambient_temp,
+        "O&M Cost": o_m_cost,
+        "Tariff": tariff,
+        "Predicted Power": round(predicted_power, 2),
+        "Predicted CO2": round(predicted_co2, 2),
+        "Efficiency": round(predicted_efficiency, 2),
+        "Estimated Profit": round(estimated_profit, 2)
+    }
+    st.session_state.history.append(record)
 
-    # Derived metrics
-    revenue = predicted_power * avg_tariff * 100
-    cost = predicted_power * fuel_cost * 100
-    profit = revenue - cost
+    st.subheader("Prediction Results")
+    st.write(f"**Predicted Power (MW):** {round(predicted_power, 2)}")
+    st.write(f"**Predicted CO2 Emissions (tons):** {round(predicted_co2, 2)}")
+    st.write(f"**Efficiency (%):** {round(predicted_efficiency, 2)}")
+    st.write(f"**Estimated Profit (INR):** {round(estimated_profit, 2)}")
 
-    st.success("✅ Prediction Complete")
-    st.metric("🔋 Predicted Power", f"{predicted_power:.2f} BU")
-    st.metric("🌍 Predicted CO₂ Emissions", f"{predicted_co2:,.2f} Tonnes")
-    st.metric("💰 Revenue", f"₹{revenue:,.2f} Cr")
-    st.metric("🔥 Fuel Cost", f"₹{cost:,.2f} Cr")
-    st.metric("📈 Estimated Profit", f"₹{profit:,.2f} Cr")
+    # Suggestions based on thresholds
+    st.subheader("Suggestions")
+    suggestions = []
+
+    if plf < 50:
+        suggestions.append("PLF is very low. Increase utilization to boost power output and reduce per-unit cost.")
+    elif 50 <= plf < 70:
+        suggestions.append("PLF is below optimal range. Aim for above 70% to increase efficiency and revenue.")
+    elif plf > 90:
+        suggestions.append("Excellent PLF. Ensure maintenance practices continue supporting high utilization.")
+
+    if fuel_cost > 3500:
+        suggestions.append("Fuel cost is high. Explore cheaper alternatives or improve fuel efficiency.")
+    elif fuel_cost < 2000:
+        suggestions.append("Low fuel costs. Consider long-term contracts to sustain this benefit.")
+
+    if predicted_power < 200:
+        suggestions.append("Predicted power is quite low. Consider increasing PLF or fuel availability.")
+
+    if predicted_co2 > 1000000:
+        suggestions.append("CO2 emissions are high. Consider switching to cleaner fuel or improving combustion efficiency.")
+
+    if estimated_profit < 1000:
+        suggestions.append("Profit is very low. Review O&M costs, fuel costs and tariff strategy.")
+
+    if heat_rate > 2600:
+        suggestions.append("High heat rate detected. Improve boiler and turbine performance.")
+
+    if o_m_cost > 5:
+        suggestions.append("High O&M cost. Audit maintenance processes to reduce cost.")
+
+    if ambient_temp > 40:
+        suggestions.append("High ambient temperature. May affect turbine performance. Consider cooling strategies.")
+
+    if predicted_efficiency < 25:
+        suggestions.append("Efficiency is below average. Consider tuning operations and reducing heat losses.")
+
+    if not suggestions:
+        suggestions.append("All parameters are within optimal range. Keep monitoring and maintaining the performance.")
+
+    for suggestion in suggestions:
+        st.markdown(f"- {suggestion}")
+
+    # Show and export predictions
+    df = pd.DataFrame(st.session_state.history)
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button("Download All Predictions as CSV", data=csv, file_name="ntpc_predictions.csv", mime="text/csv")
+
+    st.subheader("All Predictions Made in This Session")
+    st.dataframe(df, use_container_width=True)
